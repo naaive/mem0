@@ -11,6 +11,7 @@ import { MockEmbedder } from "../embeddings/mock";
 
 import { VectorStore } from "../vector_stores/base";
 import { InMemoryVectorStore } from "../vector_stores/memory";
+import { SqliteVectorStore } from "../vector_stores/sqlite";
 import { QdrantVectorStore } from "../vector_stores/qdrant";
 
 import { HistoryManager } from "../storage/base";
@@ -19,6 +20,7 @@ import { InMemoryHistoryManager } from "../storage/in_memory";
 
 import { GraphStore } from "../graphs/base";
 import { InMemoryGraphStore } from "../graphs/in_memory";
+import { SqliteGraphStore } from "../graphs/sqlite";
 
 import type {
   EmbedderConfig,
@@ -66,6 +68,8 @@ export function createVectorStore(
   config: VectorStoreConfig,
 ): VectorStore {
   switch (provider) {
+    case "sqlite":
+      return new SqliteVectorStore(config);
     case "memory":
       return new InMemoryVectorStore(config);
     case "qdrant":
@@ -91,9 +95,13 @@ export function createHistoryManager(
 
 export function createGraphStore(
   provider: string,
-  _config: GraphStoreConfig,
+  config: GraphStoreConfig,
 ): GraphStore | null {
   switch (provider) {
+    case "sqlite":
+      return new SqliteGraphStore({
+        path: typeof config.path === "string" ? config.path : undefined,
+      });
     case "memory":
       return new InMemoryGraphStore();
     case "none":
@@ -103,12 +111,17 @@ export function createGraphStore(
   }
 }
 
+/**
+ * Default config: every store defaults to SQLite (`:memory:` so tests stay
+ * hermetic; users override `path` for persistence). Mem0+ graph memory is
+ * available out of the box but disabled until `enableGraph: true`.
+ */
 export const DEFAULT_CONFIG: MemoryConfig = {
   llm: { provider: "openai", config: {} },
   embedder: { provider: "openai", config: {} },
-  vectorStore: { provider: "memory", config: { collectionName: "mem0" } },
+  vectorStore: { provider: "sqlite", config: { collectionName: "mem0" } },
   historyStore: { provider: "sqlite", config: {} },
-  graphStore: { provider: "none", config: {} },
+  graphStore: { provider: "sqlite", config: {} },
 };
 
 export function resolveConfig(input: Partial<MemoryConfig>): MemoryConfig {

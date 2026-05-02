@@ -42,11 +42,11 @@ import {
   validateSearchParams,
 } from "../utils/messages";
 import { lemmatizeForBm25 } from "../utils/lemmatization";
-import {
-  extractEntities,
-  extractEntitiesBatch,
-  type Entity,
-} from "../utils/entity_extraction";
+import { type Entity } from "../utils/entity_extraction";
+import { LocalEntityExtractor } from "../entities/local";
+import { LLMEntityExtractor } from "../entities/llm";
+import { HybridEntityExtractor } from "../entities/hybrid";
+import type { EntityExtractor } from "../entities/base";
 import { getBm25Params, normalizeBm25 } from "../utils/bm25";
 import {
   entityBoostFor,
@@ -87,6 +87,7 @@ export class Memory {
   private readonly entityStore: VectorStore | null;
   private readonly graphStore: GraphStore | null;
   private readonly graphEnabled: boolean;
+  private readonly entityExtractor: EntityExtractor;
   private initialized = false;
 
   constructor(config: Partial<MemoryConfig> = {}) {
@@ -122,6 +123,21 @@ export class Memory {
       this.config.graphStore?.config ?? {},
     );
     this.graphEnabled = !!this.config.enableGraph && this.graphStore !== null;
+
+    const ext = this.config.entityExtractor ?? { mode: "local" };
+    switch (ext.mode ?? "local") {
+      case "llm":
+        this.entityExtractor = new LLMEntityExtractor(this.llm);
+        break;
+      case "hybrid":
+        this.entityExtractor = new HybridEntityExtractor(this.llm, {
+          llmFallbackThreshold: ext.llmFallbackThreshold,
+          llmForNonLatin: ext.llmForNonLatin,
+        });
+        break;
+      default:
+        this.entityExtractor = new LocalEntityExtractor();
+    }
   }
 
   static async create(config: Partial<MemoryConfig> = {}): Promise<Memory> {
@@ -557,7 +573,9 @@ export class Memory {
     filters: SearchFilters,
   ): Promise<void> {
     if (!this.entityStore) return;
-    const allEntities = extractEntitiesBatch(memories.map((m) => m.text));
+    const allEntities = await this.entityExtractor.extractBatch(
+      memories.map((m) => m.text),
+    );
     // Global dedup across all incoming memories.
     const globalEntities = new Map<
       string,
@@ -826,7 +844,7 @@ export class Memory {
 
     // Step 1: Lemmatize + extract entities from the query.
     const queryTokens = lemmatizeForBm25(query);
-    const queryEntities = extractEntities(query);
+    const queryEntities = await this.entityExtractor.extract(query);
 
     // Step 2: Embed query.
     const queryEmbedding = await this.embedRetried(query);
@@ -1055,6 +1073,12 @@ export class Memory {
 
   async close(): Promise<void> {
     await this.history.close();
+    // Close any backing DB handles on stores that own one (sqlite-backed
+    // implementations expose a .close() method; others are no-ops).
+    for (const store of [this.vectorStore, this.entityStore, this.graphStore]) {
+      const closer = (store as { close?: () => void } | null)?.close;
+      if (typeof closer === "function") closer.call(store);
+    }
   }
 
   // ---------------- procedural memory ----------------

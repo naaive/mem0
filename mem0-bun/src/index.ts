@@ -13,6 +13,7 @@ export { MockEmbedder } from "./embeddings/mock";
 
 export { VectorStore } from "./vector_stores/base";
 export { InMemoryVectorStore } from "./vector_stores/memory";
+export { SqliteVectorStore } from "./vector_stores/sqlite";
 export { QdrantVectorStore } from "./vector_stores/qdrant";
 
 export { HistoryManager } from "./storage/base";
@@ -21,6 +22,16 @@ export { InMemoryHistoryManager } from "./storage/in_memory";
 
 export { GraphStore } from "./graphs/base";
 export { InMemoryGraphStore } from "./graphs/in_memory";
+export { SqliteGraphStore } from "./graphs/sqlite";
+
+// Entity extractors
+export type { EntityExtractor } from "./entities/base";
+export { LocalEntityExtractor } from "./entities/local";
+export { LLMEntityExtractor } from "./entities/llm";
+export {
+  HybridEntityExtractor,
+  type HybridEntityExtractorOptions,
+} from "./entities/hybrid";
 
 export {
   createEmbedder,
@@ -91,6 +102,7 @@ export type {
   AddOptions,
   DeleteAllOptions,
   EmbedderConfig,
+  EntityExtractorConfig,
   FactExtractionEvent,
   GetAllOptions,
   GraphStoreConfig,
@@ -116,4 +128,5 @@ export {
   ScoringWeightsSchema,
   RetryConfigSchema,
   GraphStoreConfigSchema,
+  EntityExtractorConfigSchema,
 } from "./types";

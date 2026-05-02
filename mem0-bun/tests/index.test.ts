@@ -83,5 +83,15 @@ describe("public API surface", () => {
     expect(api.ScoringWeightsSchema).toBeDefined();
     expect(api.RetryConfigSchema).toBeDefined();
     expect(api.GraphStoreConfigSchema).toBeDefined();
+    expect(api.EntityExtractorConfigSchema).toBeDefined();
+
+    // Sqlite-backed local-first stores
+    expect(api.SqliteVectorStore).toBeDefined();
+    expect(api.SqliteGraphStore).toBeDefined();
+
+    // Entity extractor classes
+    expect(api.LocalEntityExtractor).toBeDefined();
+    expect(api.LLMEntityExtractor).toBeDefined();
+    expect(api.HybridEntityExtractor).toBeDefined();
   });
 });

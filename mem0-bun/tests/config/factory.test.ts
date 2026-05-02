@@ -9,6 +9,8 @@ import {
   resolveConfig,
 } from "../../src/config/factory";
 import { InMemoryGraphStore } from "../../src/graphs/in_memory";
+import { SqliteGraphStore } from "../../src/graphs/sqlite";
+import { SqliteVectorStore } from "../../src/vector_stores/sqlite";
 import { MockLLM } from "../../src/llms/mock";
 import { OpenAILLM } from "../../src/llms/openai";
 import { AnthropicLLM } from "../../src/llms/anthropic";
@@ -59,6 +61,9 @@ describe("createEmbedder", () => {
 });
 
 describe("createVectorStore", () => {
+  test("sqlite", () => {
+    expect(createVectorStore("sqlite", {})).toBeInstanceOf(SqliteVectorStore);
+  });
   test("memory", () => {
     expect(createVectorStore("memory", {})).toBeInstanceOf(
       InMemoryVectorStore,
@@ -94,8 +99,20 @@ describe("createHistoryManager", () => {
 });
 
 describe("createGraphStore", () => {
+  test("sqlite returns SqliteGraphStore", () => {
+    expect(createGraphStore("sqlite", {})).toBeInstanceOf(SqliteGraphStore);
+  });
   test("memory returns InMemoryGraphStore", () => {
     expect(createGraphStore("memory", {})).toBeInstanceOf(InMemoryGraphStore);
+  });
+  test("sqlite honours config.path string (smoke)", () => {
+    expect(
+      createGraphStore("sqlite", { path: ":memory:" }),
+    ).toBeInstanceOf(SqliteGraphStore);
+    // Non-string path is silently coerced to default :memory:
+    expect(
+      createGraphStore("sqlite", { path: 123 as unknown as string }),
+    ).toBeInstanceOf(SqliteGraphStore);
   });
   test("none returns null", () => {
     expect(createGraphStore("none", {})).toBeNull();
@@ -130,7 +147,8 @@ describe("resolveConfig", () => {
     const cfg = resolveConfig({});
     expect(cfg.llm.provider).toBe("openai");
     expect(cfg.embedder.provider).toBe("openai");
-    expect(cfg.vectorStore.provider).toBe("memory");
+    expect(cfg.vectorStore.provider).toBe("sqlite");
+    expect(cfg.graphStore?.provider).toBe("sqlite");
   });
 
   test("rejects invalid provider", () => {
@@ -142,6 +160,8 @@ describe("resolveConfig", () => {
   });
 
   test("DEFAULT_CONFIG is sane", () => {
-    expect(DEFAULT_CONFIG.vectorStore.provider).toBe("memory");
+    expect(DEFAULT_CONFIG.vectorStore.provider).toBe("sqlite");
+    expect(DEFAULT_CONFIG.historyStore?.provider).toBe("sqlite");
+    expect(DEFAULT_CONFIG.graphStore?.provider).toBe("sqlite");
   });
 });

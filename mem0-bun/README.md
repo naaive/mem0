@@ -6,9 +6,15 @@ This package is a **full** Mem0 v3 (mem0+) reimplementation:
 
 - LLM-driven additive extraction (single-call ADD/UPDATE/DELETE/NONE flow with attribution).
 - Hybrid retrieval: cosine + BM25 keyword + entity-store boost + graph-traversal boost.
-- Local-first storage: `bun:sqlite` for history, in-process vector + graph stores by default.
-- Graph memory: subject-relation-object triples with multi-hop traversal for mem0+ eval reproducibility.
+- **Local-first persistence by default** — every store runs on `bun:sqlite`:
+  - `SqliteVectorStore` with FTS5 keyword search (built-in BM25) and JSON-encoded vectors.
+  - `SqliteGraphStore` for triples + embedded entity vectors.
+  - `SqliteHistoryManager` for memory change history.
+  - All single-file, no native extensions, no external services.
+- **Pluggable abstract interfaces** — `VectorStore` / `GraphStore` / `Embedder` / `LLM` / `HistoryManager` are drop-in extension points so you can swap in Qdrant/Neo4j/Kuzu/etc. without touching `Memory`.
+- Graph memory: subject-relation-object triples with multi-hop traversal.
 - Procedural memory: compress agent execution traces into a single structured summary.
+- Multi-language NER: enhanced regex (CJK / email / URL / phone / acronym / code identifier) + optional LLM and Hybrid extractors.
 - Retries with exponential backoff for LLM and embedder calls.
 - Provider integrations (OpenAI, Anthropic, Ollama, Qdrant) over `fetch` — no SDK dependencies.
 - **100% line + function coverage** under `bun test`.
@@ -28,9 +34,15 @@ import { Memory } from "@mem0/bun";
 const memory = await Memory.create({
   llm: { provider: "openai", config: { apiKey: process.env.OPENAI_API_KEY } },
   embedder: { provider: "openai", config: { apiKey: process.env.OPENAI_API_KEY } },
-  vectorStore: { provider: "memory", config: { dimension: 1536 } },
-  graphStore: { provider: "memory", config: {} },
+  // Persist to disk by passing a `path`. Omit it for `:memory:` mode.
+  vectorStore: {
+    provider: "sqlite",
+    config: { path: "./mem0.vec.db", dimension: 1536 },
+  },
+  historyStore: { provider: "sqlite", config: { path: "./mem0.history.db" } },
+  graphStore:   { provider: "sqlite", config: { path: "./mem0.graph.db" } },
   enableGraph: true,                     // turns on mem0+ graph memory
+  entityExtractor: { mode: "hybrid" },   // local NER → LLM fallback for non-Latin
   retry: { attempts: 3, baseDelayMs: 200 },
   scoringWeights: { semantic: 1.0, bm25: 0.5, entity: 0.3, graph: 0.4 },
 });
@@ -56,12 +68,19 @@ src/
 ├── llms/                           base + openai + anthropic + ollama + mock (fetch-based, retry-wrapped)
 ├── embeddings/                     base + openai + ollama + mock
 ├── vector_stores/
-│   ├── base.ts                     adds optional keywordSearch()
-│   ├── memory.ts                   in-process: cosine + BM25 inverted index
+│   ├── base.ts                     abstract — extension point for any backend
+│   ├── sqlite.ts                   default — bun:sqlite + FTS5 keyword search + JSON vectors
+│   ├── memory.ts                   in-process: cosine + BM25 (in-memory inverted index)
 │   └── qdrant.ts                   REST-API based; no full-text
 ├── graphs/
 │   ├── base.ts                     GraphStore abstract — addTriples / searchByEntities / deleteByMemoryId
-│   └── in_memory.ts                triple-list + entity index, k-hop traversal with hop-attenuation
+│   ├── sqlite.ts                   default — bun:sqlite triples table + indexed entity columns
+│   └── in_memory.ts                in-process variant
+├── entities/
+│   ├── base.ts                     EntityExtractor interface
+│   ├── local.ts                    compromise + regex augmentations (default)
+│   ├── llm.ts                      LLM-driven NER (multi-language)
+│   └── hybrid.ts                   local first, LLM fallback for non-Latin / empty-result text
 ├── storage/                        bun:sqlite + in-memory history managers
 ├── prompts/                        FACT_RETRIEVAL, UPDATE_MEMORY, ADDITIVE_EXTRACTION, TRIPLE_EXTRACTION, PROCEDURAL
 ├── config/factory.ts               provider factories + resolveConfig (zod)
@@ -117,17 +136,37 @@ Uses `PROCEDURAL_MEMORY_PROMPT` (verbatim from upstream mem0) to preserve every 
 {
   llm:        { provider: "openai" | "anthropic" | "ollama" | "mock", config: LLMConfig },
   embedder:   { provider: "openai" | "ollama" | "mock",                config: EmbedderConfig },
-  vectorStore:{ provider: "memory" | "qdrant",                          config: VectorStoreConfig },
+  vectorStore:{ provider: "sqlite" | "memory" | "qdrant",              config: VectorStoreConfig },
   historyStore?: { provider: "sqlite" | "memory", config: HistoryStoreConfig },
-  graphStore?:   { provider: "memory" | "none",   config: GraphStoreConfig },
+  graphStore?:   { provider: "sqlite" | "memory" | "none", config: GraphStoreConfig },
 
   enableGraph?:        boolean,
   disableHistory?:     boolean,
   customInstructions?: string,
   scoringWeights?:     { semantic, bm25, entity, graph },
   retry?:              { attempts, baseDelayMs, factor, maxDelayMs },
+  entityExtractor?:    { mode: "local" | "llm" | "hybrid",
+                          llmFallbackThreshold?, llmForNonLatin? },
 }
 ```
+
+### Storage providers — pick one
+
+| Provider | Persistence | Notes |
+|---|---|---|
+| `sqlite` (default) | Disk via `bun:sqlite`, single file per store | FTS5 keyword search built in. Set `path` for persistence; omit for `:memory:`. |
+| `memory` | None | In-process `Map`-backed; tests / ephemeral. |
+| `qdrant` | Remote service | REST-API client; useful when scaling beyond a single process. |
+
+The `VectorStore` / `GraphStore` / `Embedder` / `LLM` / `HistoryManager` interfaces stay open so you can plug in Neo4j, Kuzu, pgvector, etc. without touching the `Memory` class.
+
+### NER strategy
+
+| Mode | When to use |
+|---|---|
+| `local` (default) | English text, fast, free. Uses compromise + regex augmentations (CJK chunks, emails, URLs, phone numbers, ALL-CAPS acronyms, code identifiers). |
+| `llm` | Multi-language inputs where you want maximum recall. Each query/memory pays one LLM call (results are cached per-text). |
+| `hybrid` (recommended for production) | Local first; LLM fallback only when local returns nothing OR the text contains non-Latin script (Chinese, Japanese, Korean, Arabic, Cyrillic, Hebrew, Devanagari, Thai). |
 
 ## Testing
 
@@ -143,10 +182,10 @@ Every external dependency is mocked:
 
 ## Local-first defaults
 
-- `historyStore.provider: "sqlite"` uses `bun:sqlite` — ships with Bun, no native build, no external service.
-- `vectorStore.provider: "memory"` is in-process and supports both semantic and BM25 search end-to-end.
-- `graphStore.provider: "memory"` keeps triples in a Map; replace with a Kuzu/Neo4j adapter that implements `GraphStore` for production-scale graphs.
+- All three persistence layers default to `bun:sqlite` — no native compilation, no external services, single-file databases.
+- Pass a `path` config to persist to disk; omit it for `:memory:` mode (useful for tests).
 - LLM/Embedder providers default to `localhost:11434` for Ollama, so the entire stack runs offline.
+- Pluggable abstractions (`VectorStore`, `GraphStore`, `Embedder`, `LLM`, `HistoryManager`, `EntityExtractor`) are preserved so you can swap in Qdrant / Neo4j / Kuzu / pgvector / Cohere / etc. without touching `Memory`.
 
 ## License
 

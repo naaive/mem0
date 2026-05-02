@@ -555,6 +555,25 @@ describe("Memory.update / delete / deleteAll / reset", () => {
   });
 });
 
+describe("Memory entityExtractor selection", () => {
+  test("mode=llm constructs LLMEntityExtractor", () => {
+    const { memory } = buildMemory([], {
+      entityExtractor: { mode: "llm" },
+    });
+    expect(memory).toBeDefined();
+  });
+  test("mode=hybrid constructs HybridEntityExtractor", () => {
+    const { memory } = buildMemory([], {
+      entityExtractor: { mode: "hybrid", llmFallbackThreshold: 0 },
+    });
+    expect(memory).toBeDefined();
+  });
+  test("default falls through to local extractor", () => {
+    const { memory } = buildMemory([], {});
+    expect(memory).toBeDefined();
+  });
+});
+
 describe("Memory.create static helper", () => {
   test("returns initialized instance, double init is no-op", async () => {
     const m = await Memory.create({

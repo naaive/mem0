@@ -132,6 +132,16 @@ export const GraphStoreConfigSchema = z
   .passthrough();
 export type GraphStoreConfig = z.infer<typeof GraphStoreConfigSchema>;
 
+export const EntityExtractorConfigSchema = z.object({
+  /** "local" | "llm" | "hybrid". Default "local". */
+  mode: z.enum(["local", "llm", "hybrid"]).default("local").optional(),
+  /** Hybrid: minimum local hits before invoking LLM fallback. */
+  llmFallbackThreshold: z.number().int().nonnegative().optional(),
+  /** Hybrid: also invoke LLM when text contains non-Latin script. */
+  llmForNonLatin: z.boolean().optional(),
+});
+export type EntityExtractorConfig = z.infer<typeof EntityExtractorConfigSchema>;
+
 export const MemoryConfigSchema = z.object({
   llm: z.object({
     provider: z.enum(["openai", "anthropic", "ollama", "mock"]),
@@ -142,7 +152,7 @@ export const MemoryConfigSchema = z.object({
     config: EmbedderConfigSchema,
   }),
   vectorStore: z.object({
-    provider: z.enum(["memory", "qdrant"]),
+    provider: z.enum(["sqlite", "memory", "qdrant"]),
     config: VectorStoreConfigSchema,
   }),
   historyStore: z
@@ -153,7 +163,7 @@ export const MemoryConfigSchema = z.object({
     .optional(),
   graphStore: z
     .object({
-      provider: z.enum(["memory", "none"]).default("none"),
+      provider: z.enum(["sqlite", "memory", "none"]).default("sqlite"),
       config: GraphStoreConfigSchema,
     })
     .optional(),
@@ -163,6 +173,8 @@ export const MemoryConfigSchema = z.object({
   retry: RetryConfigSchema.optional(),
   /** Enable graph memory if a graph store is configured. Default false. */
   enableGraph: z.boolean().optional(),
+  /** Entity extraction strategy. */
+  entityExtractor: EntityExtractorConfigSchema.optional(),
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 

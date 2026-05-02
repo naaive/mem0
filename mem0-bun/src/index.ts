@@ -19,8 +19,12 @@ export { HistoryManager } from "./storage/base";
 export { SqliteHistoryManager } from "./storage/sqlite";
 export { InMemoryHistoryManager } from "./storage/in_memory";
 
+export { GraphStore } from "./graphs/base";
+export { InMemoryGraphStore } from "./graphs/in_memory";
+
 export {
   createEmbedder,
+  createGraphStore,
   createHistoryManager,
   createLLM,
   createVectorStore,
@@ -31,7 +35,13 @@ export {
 export {
   factRetrievalPrompt,
   UPDATE_MEMORY_PROMPT,
+  ADDITIVE_EXTRACTION_PROMPT,
+  AGENT_CONTEXT_SUFFIX,
+  TRIPLE_EXTRACTION_PROMPT,
+  PROCEDURAL_MEMORY_PROMPT,
   buildUpdateMemoryUserPrompt,
+  buildAdditiveExtractionUserPrompt,
+  buildTripleExtractionUserPrompt,
 } from "./prompts";
 
 export { extractJson, safeJsonParse } from "./utils/json";
@@ -43,6 +53,39 @@ export {
   validateEntityId,
   validateSearchParams,
 } from "./utils/messages";
+export {
+  lemmatizeForBm25,
+  tokenize,
+  stem,
+  stopwordsSet,
+} from "./utils/lemmatization";
+export {
+  extractEntities,
+  extractEntitiesBatch,
+  type Entity,
+  type EntityType,
+} from "./utils/entity_extraction";
+export {
+  buildCorpusStats,
+  scoreBm25,
+  normalizeBm25,
+  getBm25Params,
+  type CorpusStats,
+  type Bm25Options,
+} from "./utils/bm25";
+export {
+  scoreAndRank,
+  entityBoostFor,
+  type Candidate,
+  type ScoredCandidate,
+} from "./utils/scoring";
+export { withRetry, type RetryOptions } from "./utils/retry";
+
+export type {
+  Triple,
+  TripleMatch,
+  GraphSearchOptions,
+} from "./graphs/base";
 
 export type {
   AddOptions,
@@ -50,6 +93,7 @@ export type {
   EmbedderConfig,
   FactExtractionEvent,
   GetAllOptions,
+  GraphStoreConfig,
   HistoryRecord,
   HistoryStoreConfig,
   LLMConfig,
@@ -57,6 +101,9 @@ export type {
   MemoryItem,
   MemoryUpdateAction,
   Message,
+  ProceduralMemoryOptions,
+  RetryConfig,
+  ScoringWeights,
   SearchFilters,
   SearchOptions,
   SearchResult,
@@ -64,4 +111,9 @@ export type {
   VectorStoreConfig,
 } from "./types";
 
-export { MemoryConfigSchema } from "./types";
+export {
+  MemoryConfigSchema,
+  ScoringWeightsSchema,
+  RetryConfigSchema,
+  GraphStoreConfigSchema,
+} from "./types";

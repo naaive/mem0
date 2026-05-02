@@ -17,8 +17,12 @@ import { HistoryManager } from "../storage/base";
 import { SqliteHistoryManager } from "../storage/sqlite";
 import { InMemoryHistoryManager } from "../storage/in_memory";
 
+import { GraphStore } from "../graphs/base";
+import { InMemoryGraphStore } from "../graphs/in_memory";
+
 import type {
   EmbedderConfig,
+  GraphStoreConfig,
   HistoryStoreConfig,
   LLMConfig,
   MemoryConfig,
@@ -85,11 +89,26 @@ export function createHistoryManager(
   }
 }
 
+export function createGraphStore(
+  provider: string,
+  _config: GraphStoreConfig,
+): GraphStore | null {
+  switch (provider) {
+    case "memory":
+      return new InMemoryGraphStore();
+    case "none":
+      return null;
+    default:
+      throw new Error(`Unsupported graph store provider: ${provider}`);
+  }
+}
+
 export const DEFAULT_CONFIG: MemoryConfig = {
   llm: { provider: "openai", config: {} },
   embedder: { provider: "openai", config: {} },
   vectorStore: { provider: "memory", config: { collectionName: "mem0" } },
   historyStore: { provider: "sqlite", config: {} },
+  graphStore: { provider: "none", config: {} },
 };
 
 export function resolveConfig(input: Partial<MemoryConfig>): MemoryConfig {
@@ -107,6 +126,7 @@ export function resolveConfig(input: Partial<MemoryConfig>): MemoryConfig {
       },
     },
     historyStore: input.historyStore ?? DEFAULT_CONFIG.historyStore,
+    graphStore: input.graphStore ?? DEFAULT_CONFIG.graphStore,
   } as MemoryConfig;
   return MemoryConfigSchema.parse(merged);
 }

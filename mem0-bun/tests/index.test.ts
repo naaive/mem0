@@ -49,5 +49,39 @@ describe("public API surface", () => {
     expect(api.validateSearchParams).toBeInstanceOf(Function);
 
     expect(api.MemoryConfigSchema).toBeDefined();
+
+    // V3 / mem0+ surface
+    expect(api.GraphStore).toBeDefined();
+    expect(api.InMemoryGraphStore).toBeDefined();
+    expect(api.createGraphStore).toBeInstanceOf(Function);
+
+    expect(typeof api.ADDITIVE_EXTRACTION_PROMPT).toBe("string");
+    expect(typeof api.AGENT_CONTEXT_SUFFIX).toBe("string");
+    expect(typeof api.TRIPLE_EXTRACTION_PROMPT).toBe("string");
+    expect(typeof api.PROCEDURAL_MEMORY_PROMPT).toBe("string");
+    expect(api.buildAdditiveExtractionUserPrompt).toBeInstanceOf(Function);
+    expect(api.buildTripleExtractionUserPrompt).toBeInstanceOf(Function);
+
+    expect(api.lemmatizeForBm25).toBeInstanceOf(Function);
+    expect(api.tokenize).toBeInstanceOf(Function);
+    expect(api.stem).toBeInstanceOf(Function);
+    expect(api.stopwordsSet).toBeInstanceOf(Function);
+
+    expect(api.extractEntities).toBeInstanceOf(Function);
+    expect(api.extractEntitiesBatch).toBeInstanceOf(Function);
+
+    expect(api.buildCorpusStats).toBeInstanceOf(Function);
+    expect(api.scoreBm25).toBeInstanceOf(Function);
+    expect(api.normalizeBm25).toBeInstanceOf(Function);
+    expect(api.getBm25Params).toBeInstanceOf(Function);
+
+    expect(api.scoreAndRank).toBeInstanceOf(Function);
+    expect(api.entityBoostFor).toBeInstanceOf(Function);
+
+    expect(api.withRetry).toBeInstanceOf(Function);
+
+    expect(api.ScoringWeightsSchema).toBeDefined();
+    expect(api.RetryConfigSchema).toBeDefined();
+    expect(api.GraphStoreConfigSchema).toBeDefined();
   });
 });

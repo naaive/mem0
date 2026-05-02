@@ -30,4 +30,15 @@ export abstract class VectorStore {
     limit?: number,
   ): Promise<VectorRecord[]>;
   abstract deleteCollection(): Promise<void>;
+
+  /**
+   * Optional keyword (BM25) search. Implementations that don't support
+   * full-text scoring should leave this undefined; the Memory class falls
+   * back to semantic-only retrieval.
+   */
+  keywordSearch?(
+    queryTokens: string[],
+    limit: number,
+    filters?: Record<string, unknown>,
+  ): Promise<VectorRecord[]>;
 }

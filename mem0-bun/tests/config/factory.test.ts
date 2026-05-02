@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   createEmbedder,
+  createGraphStore,
   createHistoryManager,
   createLLM,
   createVectorStore,
   DEFAULT_CONFIG,
   resolveConfig,
 } from "../../src/config/factory";
+import { InMemoryGraphStore } from "../../src/graphs/in_memory";
 import { MockLLM } from "../../src/llms/mock";
 import { OpenAILLM } from "../../src/llms/openai";
 import { AnthropicLLM } from "../../src/llms/anthropic";
@@ -88,6 +90,18 @@ describe("createHistoryManager", () => {
     expect(() => createHistoryManager("???", {})).toThrow(
       /Unsupported history/,
     );
+  });
+});
+
+describe("createGraphStore", () => {
+  test("memory returns InMemoryGraphStore", () => {
+    expect(createGraphStore("memory", {})).toBeInstanceOf(InMemoryGraphStore);
+  });
+  test("none returns null", () => {
+    expect(createGraphStore("none", {})).toBeNull();
+  });
+  test("unknown throws", () => {
+    expect(() => createGraphStore("???", {})).toThrow(/Unsupported graph/);
   });
 });
 

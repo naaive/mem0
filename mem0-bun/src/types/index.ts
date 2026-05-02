@@ -109,6 +109,29 @@ export const HistoryStoreConfigSchema = z.object({
 });
 export type HistoryStoreConfig = z.infer<typeof HistoryStoreConfigSchema>;
 
+export const ScoringWeightsSchema = z.object({
+  semantic: z.number().nonnegative().optional(),
+  bm25: z.number().nonnegative().optional(),
+  entity: z.number().nonnegative().optional(),
+  graph: z.number().nonnegative().optional(),
+});
+export type ScoringWeights = z.infer<typeof ScoringWeightsSchema>;
+
+export const RetryConfigSchema = z.object({
+  attempts: z.number().int().positive().optional(),
+  baseDelayMs: z.number().int().nonnegative().optional(),
+  factor: z.number().positive().optional(),
+  maxDelayMs: z.number().int().positive().optional(),
+});
+export type RetryConfig = z.infer<typeof RetryConfigSchema>;
+
+export const GraphStoreConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+  })
+  .passthrough();
+export type GraphStoreConfig = z.infer<typeof GraphStoreConfigSchema>;
+
 export const MemoryConfigSchema = z.object({
   llm: z.object({
     provider: z.enum(["openai", "anthropic", "ollama", "mock"]),
@@ -128,8 +151,18 @@ export const MemoryConfigSchema = z.object({
       config: HistoryStoreConfigSchema,
     })
     .optional(),
+  graphStore: z
+    .object({
+      provider: z.enum(["memory", "none"]).default("none"),
+      config: GraphStoreConfigSchema,
+    })
+    .optional(),
   disableHistory: z.boolean().optional(),
   customInstructions: z.string().optional(),
+  scoringWeights: ScoringWeightsSchema.optional(),
+  retry: RetryConfigSchema.optional(),
+  /** Enable graph memory if a graph store is configured. Default false. */
+  enableGraph: z.boolean().optional(),
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
@@ -139,4 +172,12 @@ export interface MemoryUpdateAction {
   text: string;
   event: FactExtractionEvent;
   oldMemory?: string;
+  attributedTo?: string;
+}
+
+export interface ProceduralMemoryOptions {
+  agentId?: string;
+  userId?: string;
+  runId?: string;
+  metadata?: Record<string, unknown>;
 }

@@ -105,6 +105,43 @@ describe("LLMEntityExtractor", () => {
     expect(await e.extract("hello")).toEqual([]);
   });
 
+  test("clearCache forces a re-call", async () => {
+    let calls = 0;
+    const llm = new MockLLM({
+      responder: () => {
+        calls++;
+        return JSON.stringify({
+          entities: [{ text: "Alice", type: "person" }],
+        });
+      },
+    });
+    const e = new LLMEntityExtractor(llm);
+    await e.extract("Alice");
+    e.clearCache();
+    await e.extract("Alice");
+    expect(calls).toBe(2);
+  });
+
+  test("LRU eviction drops oldest entry past cacheMax", async () => {
+    let calls = 0;
+    const llm = new MockLLM({
+      responder: (msgs) => {
+        calls++;
+        return JSON.stringify({
+          entities: [{ text: msgs[1]!.content, type: "topic" }],
+        });
+      },
+    });
+    const e = new LLMEntityExtractor(llm, { cacheMax: 2 });
+    await e.extract("a");
+    await e.extract("b");
+    await e.extract("a"); // refreshes a's LRU position
+    await e.extract("c"); // evicts b
+    await e.extract("a"); // still cached
+    await e.extract("b"); // re-fetched
+    expect(calls).toBe(4); // a, b, c, b again
+  });
+
   test("caches results so repeat calls don't re-invoke the LLM", async () => {
     let calls = 0;
     const llm = new MockLLM({

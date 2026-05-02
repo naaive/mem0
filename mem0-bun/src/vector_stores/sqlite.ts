@@ -1,6 +1,13 @@
 import { Database } from "bun:sqlite";
 import { VectorStore } from "./base";
 import { cosineSimilarity } from "../utils/hash";
+import {
+  SCOPED_KEYS,
+  buildScopedWhere,
+  extractScopedColumns,
+  hasExtraFilters,
+  matchPayloadFilters,
+} from "../utils/sqlite_filters";
 import type { VectorRecord, VectorStoreConfig } from "../types";
 
 interface RowShape {
@@ -15,13 +22,10 @@ interface RowShape {
 /**
  * Disk-backed embedded vector store on top of `bun:sqlite`.
  *
- * - Vectors and payloads are JSON-encoded; cosine similarity is computed in
- *   TypeScript on the rows that pass scoped filters.
- * - Keyword search uses an FTS5 virtual table over `payload.data` with
- *   `porter unicode61` tokenization. The BM25 score from `bm25(fts)` is
- *   returned (negated so larger = more relevant).
- * - One database file per store instance. The Memory class derives a
- *   sibling path for the entity store automatically.
+ * Vectors and payloads are JSON-encoded; cosine similarity is computed in
+ * TypeScript on rows that pass scoped filters. Keyword search uses an
+ * FTS5 virtual table over `payload.data` with `porter unicode61`
+ * tokenization and the built-in `bm25()` ranker.
  */
 export class SqliteVectorStore extends VectorStore {
   private readonly db: Database;
@@ -33,18 +37,18 @@ export class SqliteVectorStore extends VectorStore {
     const path = (config.path as string | undefined) ?? ":memory:";
     this.db = new Database(path);
     this.db.exec("PRAGMA journal_mode = WAL");
+    const scopedColumns = SCOPED_KEYS.map((k) => `${k} TEXT`).join(", ");
+    const scopedIndexes = SCOPED_KEYS.map(
+      (k) => `CREATE INDEX IF NOT EXISTS idx_records_${k} ON records(${k})`,
+    ).join(";\n      ");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS records (
         id TEXT PRIMARY KEY,
         vector_json TEXT NOT NULL,
         payload_json TEXT NOT NULL,
-        user_id TEXT,
-        agent_id TEXT,
-        run_id TEXT
+        ${scopedColumns}
       );
-      CREATE INDEX IF NOT EXISTS idx_records_user ON records(user_id);
-      CREATE INDEX IF NOT EXISTS idx_records_agent ON records(agent_id);
-      CREATE INDEX IF NOT EXISTS idx_records_run ON records(run_id);
+      ${scopedIndexes};
 
       CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
         id UNINDEXED,
@@ -67,68 +71,6 @@ export class SqliteVectorStore extends VectorStore {
       .run(id, data);
   }
 
-  private deleteFts(id: string): void {
-    this.db.prepare("DELETE FROM records_fts WHERE id = ?").run(id);
-  }
-
-  private extractScopedColumns(payload: Record<string, unknown>): {
-    user_id: string | null;
-    agent_id: string | null;
-    run_id: string | null;
-  } {
-    return {
-      user_id: payload.user_id ? String(payload.user_id) : null,
-      agent_id: payload.agent_id ? String(payload.agent_id) : null,
-      run_id: payload.run_id ? String(payload.run_id) : null,
-    };
-  }
-
-  private rowToRecord(row: RowShape): {
-    id: string;
-    vector: number[];
-    payload: Record<string, unknown>;
-  } {
-    return {
-      id: row.id,
-      vector: JSON.parse(row.vector_json) as number[],
-      payload: JSON.parse(row.payload_json) as Record<string, unknown>,
-    };
-  }
-
-  private buildScopedWhere(filters?: Record<string, unknown>): {
-    sql: string;
-    params: (string | number | null)[];
-  } {
-    const clauses: string[] = [];
-    const params: (string | number | null)[] = [];
-    if (filters) {
-      for (const key of ["user_id", "agent_id", "run_id"] as const) {
-        const v = filters[key];
-        if (v !== undefined) {
-          clauses.push(`${key} = ?`);
-          params.push(typeof v === "number" ? v : String(v));
-        }
-      }
-    }
-    return {
-      sql: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
-      params,
-    };
-  }
-
-  private matchAdditionalFilters(
-    payload: Record<string, unknown>,
-    filters?: Record<string, unknown>,
-  ): boolean {
-    if (!filters) return true;
-    for (const [k, v] of Object.entries(filters)) {
-      if (v === undefined) continue;
-      if (k === "user_id" || k === "agent_id" || k === "run_id") continue;
-      if (payload[k] !== v) return false;
-    }
-    return true;
-  }
-
   // ---------------- CRUD ----------------
 
   async insert(
@@ -146,7 +88,7 @@ export class SqliteVectorStore extends VectorStore {
       for (let i = 0; i < ids.length; i++) {
         const id = ids[i]!;
         const payload = payloads[i]!;
-        const cols = this.extractScopedColumns(payload);
+        const cols = extractScopedColumns(payload);
         stmt.run(
           id,
           JSON.stringify(vectors[i]),
@@ -166,12 +108,8 @@ export class SqliteVectorStore extends VectorStore {
     vector: number[],
     payload: Record<string, unknown>,
   ): Promise<void> {
-    const exists = this.db
-      .prepare("SELECT 1 FROM records WHERE id = ?")
-      .get(id);
-    if (!exists) throw new Error(`Record ${id} not found`);
-    const cols = this.extractScopedColumns(payload);
-    this.db
+    const cols = extractScopedColumns(payload);
+    const result = this.db
       .prepare(
         "UPDATE records SET vector_json = ?, payload_json = ?, user_id = ?, agent_id = ?, run_id = ? WHERE id = ?",
       )
@@ -183,13 +121,14 @@ export class SqliteVectorStore extends VectorStore {
         cols.run_id,
         id,
       );
+    if (result.changes === 0) throw new Error(`Record ${id} not found`);
     this.upsertFts(id, String(payload.data ?? ""));
   }
 
   async delete(id: string): Promise<void> {
     const tx = this.db.transaction(() => {
       this.db.prepare("DELETE FROM records WHERE id = ?").run(id);
-      this.deleteFts(id);
+      this.db.prepare("DELETE FROM records_fts WHERE id = ?").run(id);
     });
     tx();
   }
@@ -199,24 +138,26 @@ export class SqliteVectorStore extends VectorStore {
       .prepare("SELECT * FROM records WHERE id = ?")
       .get(id) as RowShape | null;
     if (!row) return null;
-    const rec = this.rowToRecord(row);
-    return { id: rec.id, payload: rec.payload };
+    return { id: row.id, payload: JSON.parse(row.payload_json) };
   }
 
   async list(
     filters?: Record<string, unknown>,
     limit = 100,
   ): Promise<VectorRecord[]> {
-    const { sql, params } = this.buildScopedWhere(filters);
-    // Pull a wider window so we can apply additional payload filters in TS.
+    const { sql, params } = buildScopedWhere(filters);
+    // Over-fetch only when extra payload filters require post-filtering.
+    const fetch = hasExtraFilters(filters) ? Math.max(limit * 4, limit) : limit;
     const rows = this.db
-      .prepare(`SELECT * FROM records ${sql} LIMIT ?`)
-      .all(...params, Math.max(limit * 4, limit)) as RowShape[];
+      .prepare(
+        `SELECT id, payload_json FROM records ${sql} ORDER BY rowid LIMIT ?`,
+      )
+      .all(...params, fetch) as Pick<RowShape, "id" | "payload_json">[];
     const out: VectorRecord[] = [];
     for (const row of rows) {
-      const rec = this.rowToRecord(row);
-      if (!this.matchAdditionalFilters(rec.payload, filters)) continue;
-      out.push({ id: rec.id, payload: rec.payload });
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      if (!matchPayloadFilters(payload, filters)) continue;
+      out.push({ id: row.id, payload });
       if (out.length >= limit) break;
     }
     return out;
@@ -227,22 +168,30 @@ export class SqliteVectorStore extends VectorStore {
     limit: number,
     filters?: Record<string, unknown>,
   ): Promise<VectorRecord[]> {
-    const { sql, params } = this.buildScopedWhere(filters);
+    const { sql, params } = buildScopedWhere(filters);
     const rows = this.db
-      .prepare(`SELECT * FROM records ${sql}`)
-      .all(...params) as RowShape[];
-    const scored: VectorRecord[] = [];
+      .prepare(`SELECT id, vector_json, payload_json FROM records ${sql}`)
+      .all(...params) as Pick<
+      RowShape,
+      "id" | "vector_json" | "payload_json"
+    >[];
+    // Pass 1: parse vectors, score, keep payload_json string (lazy).
+    const scored: Array<{ id: string; payload_json: string; score: number }> =
+      [];
     for (const row of rows) {
-      const rec = this.rowToRecord(row);
-      if (!this.matchAdditionalFilters(rec.payload, filters)) continue;
-      scored.push({
-        id: rec.id,
-        payload: rec.payload,
-        score: cosineSimilarity(query, rec.vector),
-      });
+      const score = cosineSimilarity(query, JSON.parse(row.vector_json));
+      scored.push({ id: row.id, payload_json: row.payload_json, score });
     }
-    scored.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    return scored.slice(0, limit);
+    scored.sort((a, b) => b.score - a.score);
+    // Pass 2: parse payloads only for survivors, applying extra filters.
+    const out: VectorRecord[] = [];
+    for (const s of scored) {
+      const payload = JSON.parse(s.payload_json) as Record<string, unknown>;
+      if (!matchPayloadFilters(payload, filters)) continue;
+      out.push({ id: s.id, payload, score: s.score });
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   override async keywordSearch(
@@ -251,33 +200,34 @@ export class SqliteVectorStore extends VectorStore {
     filters?: Record<string, unknown>,
   ): Promise<VectorRecord[]> {
     if (queryTokens.length === 0) return [];
-    // FTS5 expects an OR query with quoted tokens for safety.
     const matchExpr = queryTokens
       .map((t) => `"${t.replace(/"/g, '""')}"`)
       .join(" OR ");
-    const { sql, params } = this.buildScopedWhere(filters);
+    const { sql: scopedSql, params: scopedParams } = buildScopedWhere(filters);
+    // Build the WHERE programmatically: FTS MATCH first, then scoped clauses.
+    const clauses = ["records_fts MATCH ?"];
+    if (scopedSql) clauses.push(scopedSql.replace(/^WHERE /, ""));
     const fullSql = `
-      SELECT records.*, bm25(records_fts) as fts_score
+      SELECT records.id, records.payload_json, bm25(records_fts) as fts_score
       FROM records_fts
       JOIN records ON records.id = records_fts.id
-      ${sql ? sql.replace(/^WHERE/, "WHERE records_fts MATCH ? AND") : "WHERE records_fts MATCH ?"}
+      WHERE ${clauses.join(" AND ")}
       ORDER BY fts_score
       LIMIT ?
     `;
-    const allParams = sql ? [matchExpr, ...params, limit] : [matchExpr, limit];
     const rows = this.db
       .prepare(fullSql)
-      .all(...allParams) as Array<RowShape & { fts_score: number }>;
+      .all(matchExpr, ...scopedParams, limit) as Array<{
+      id: string;
+      payload_json: string;
+      fts_score: number;
+    }>;
     const out: VectorRecord[] = [];
     for (const row of rows) {
-      const rec = this.rowToRecord(row);
-      if (!this.matchAdditionalFilters(rec.payload, filters)) continue;
+      const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+      if (!matchPayloadFilters(payload, filters)) continue;
       // FTS5 returns bm25 in negative form (smaller = more relevant). Flip sign.
-      out.push({
-        id: rec.id,
-        payload: rec.payload,
-        score: -row.fts_score,
-      });
+      out.push({ id: row.id, payload, score: -row.fts_score });
     }
     return out;
   }
@@ -290,8 +240,7 @@ export class SqliteVectorStore extends VectorStore {
     tx();
   }
 
-  /** Visible for tests + Memory.close(): closes the underlying DB handle. */
-  close(): void {
+  override close(): void {
     this.db.close();
   }
 }

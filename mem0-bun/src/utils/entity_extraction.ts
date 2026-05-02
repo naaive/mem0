@@ -1,18 +1,25 @@
 import nlp from "compromise";
 
-export type EntityType =
-  | "person"
-  | "place"
-  | "organization"
-  | "date"
-  | "value"
-  | "topic"
-  | "email"
-  | "url"
-  | "phone"
-  | "acronym"
-  | "code"
-  | "cjk";
+export const ENTITY_TYPES = [
+  "person",
+  "place",
+  "organization",
+  "date",
+  "value",
+  "topic",
+  "email",
+  "url",
+  "phone",
+  "acronym",
+  "code",
+  "cjk",
+] as const;
+
+export type EntityType = (typeof ENTITY_TYPES)[number];
+
+export const VALID_ENTITY_TYPES: ReadonlySet<EntityType> = new Set(
+  ENTITY_TYPES,
+);
 
 export interface Entity {
   text: string;
@@ -28,23 +35,35 @@ interface CompromiseDoc {
   topics: () => CompromiseDoc;
 }
 
-function normalize(text: string): string {
-  // Strip leading/trailing punctuation that compromise sometimes leaves
-  // attached. Keep internal punctuation so multi-word entities like
-  // "St. Louis" or domain-style code identifiers survive.
+/**
+ * Strip leading/trailing punctuation that compromise sometimes leaves
+ * attached. Keep internal punctuation so multi-word entities like
+ * "St. Louis" or domain-style code identifiers survive.
+ */
+export function normalizeEntityText(text: string): string {
   return text.replace(/^[\s\p{P}]+|[\s\p{P}]+$/gu, "");
 }
 
-function unique(items: Entity[]): Entity[] {
+/** Stable dedup key for an entity. */
+export function entityKey(entity: { type: string; text: string }): string {
+  return `${entity.type}::${entity.text.toLowerCase()}`;
+}
+
+/**
+ * Normalize and dedup a list of entities by `(type, lowercased-text)`.
+ * Preserves the first occurrence's casing.
+ */
+export function dedupEntities(items: Entity[]): Entity[] {
   const seen = new Set<string>();
   const out: Entity[] = [];
   for (const e of items) {
-    const cleaned = normalize(e.text);
+    const cleaned = normalizeEntityText(e.text);
     if (!cleaned) continue;
-    const key = `${e.type}::${cleaned.toLowerCase()}`;
+    const normalized: Entity = { text: cleaned, type: e.type };
+    const key = entityKey(normalized);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ text: cleaned, type: e.type });
+    out.push(normalized);
   }
   return out;
 }
@@ -120,7 +139,7 @@ export function extractEntities(text: string): Entity[] {
   }
 
   items.push(...regexEntities(text));
-  return unique(items);
+  return dedupEntities(items);
 }
 
 /** Vectorized variant — returns one entity list per input string. */

@@ -553,6 +553,15 @@ describe("Memory.update / delete / deleteAll / reset", () => {
     await memory.add("x", { userId: "u1", infer: false });
     await memory.close();
   });
+
+  test("close releases graph + entity store backends when enabled", async () => {
+    const { memory } = buildMemory([], {
+      graphStore: { provider: "memory", config: {} },
+      enableGraph: true,
+    });
+    await memory.add("x", { userId: "u1", infer: false });
+    await memory.close();
+  });
 });
 
 describe("Memory entityExtractor selection", () => {

@@ -1,5 +1,5 @@
 import type { EntityExtractor } from "./base";
-import type { Entity } from "../utils/entity_extraction";
+import { dedupEntities, type Entity } from "../utils/entity_extraction";
 import { LocalEntityExtractor } from "./local";
 import { LLMEntityExtractor } from "./llm";
 import type { LLM } from "../llms/base";
@@ -53,24 +53,10 @@ export class HybridEntityExtractor implements EntityExtractor {
     if (!needsLlm) return localEnts;
     const llmEnts = await this.llm.extract(text);
     if (llmEnts.length === 0) return localEnts;
-    return this.merge(localEnts, llmEnts);
+    return dedupEntities([...localEnts, ...llmEnts]);
   }
 
   async extractBatch(texts: string[]): Promise<Entity[][]> {
-    const out: Entity[][] = [];
-    for (const t of texts) out.push(await this.extract(t));
-    return out;
-  }
-
-  private merge(a: Entity[], b: Entity[]): Entity[] {
-    const seen = new Set<string>();
-    const out: Entity[] = [];
-    for (const e of [...a, ...b]) {
-      const key = `${e.type}::${e.text.toLowerCase()}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(e);
-    }
-    return out;
+    return Promise.all(texts.map((t) => this.extract(t)));
   }
 }

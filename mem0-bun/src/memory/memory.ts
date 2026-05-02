@@ -261,7 +261,6 @@ export class Memory {
   ): Promise<SearchResult> {
     const isAgentScoped = !!filters.agent_id && !filters.user_id;
 
-    // Phase 1: Retrieve existing memories.
     const queryEmbedding = await this.embedRetried(transcript);
     const existingResults = await this.vectorStore.search(
       queryEmbedding,
@@ -277,7 +276,6 @@ export class Memory {
       },
     );
 
-    // Phase 2: Single-call additive extraction.
     const systemPrompt = isAgentScoped
       ? ADDITIVE_EXTRACTION_PROMPT + AGENT_CONTEXT_SUFFIX
       : ADDITIVE_EXTRACTION_PROMPT;
@@ -302,7 +300,6 @@ export class Memory {
     const decisions = this.parseExtractionResponse(raw);
     if (decisions.length === 0) return { results: [] };
 
-    // Phase 3: Batch embed ADD/UPDATE texts upfront.
     const textsToEmbed = decisions
       .filter((d) => d.event === "ADD" || d.event === "UPDATE")
       .map((d) => d.text);
@@ -320,7 +317,6 @@ export class Memory {
       }
     }
 
-    // Phase 4: Apply actions.
     const results: MemoryItem[] = [];
     const newMemoryRecords: Array<{ id: string; text: string }> = [];
     for (const d of decisions) {
@@ -371,7 +367,6 @@ export class Memory {
       }
     }
 
-    // Phase 5: Entity-store linking (best effort).
     if (newMemoryRecords.length > 0 && this.entityStore) {
       try {
         await this.linkEntities(newMemoryRecords, filters);
@@ -380,7 +375,6 @@ export class Memory {
       }
     }
 
-    // Phase 6: Graph triples (best effort, only when enabled).
     if (this.graphEnabled && newMemoryRecords.length > 0) {
       try {
         await this.linkGraphTriples(newMemoryRecords, filters);
@@ -389,7 +383,6 @@ export class Memory {
       }
     }
 
-    // Phase 7: Save raw messages to history for context in future calls.
     if (this.historyEnabled) {
       for (const m of rawMessages) {
         if (m.role === "system") continue;
@@ -842,14 +835,11 @@ export class Memory {
       );
     }
 
-    // Step 1: Lemmatize + extract entities from the query.
     const queryTokens = lemmatizeForBm25(query);
     const queryEntities = await this.entityExtractor.extract(query);
 
-    // Step 2: Embed query.
     const queryEmbedding = await this.embedRetried(query);
 
-    // Step 3: Over-fetch semantic candidates.
     const internalLimit = Math.max(topK * 4, 60);
     const semanticResults = await this.vectorStore.search(
       queryEmbedding,
@@ -857,7 +847,6 @@ export class Memory {
       filters,
     );
 
-    // Step 4: BM25 keyword search if supported.
     const bm25Scores = new Map<string, number>();
     if (
       typeof this.vectorStore.keywordSearch === "function" &&
@@ -881,7 +870,6 @@ export class Memory {
       }
     }
 
-    // Step 5: Entity-store boost.
     const entityBoosts = new Map<string, number>();
     if (queryEntities.length > 0 && this.entityStore) {
       try {
@@ -921,7 +909,6 @@ export class Memory {
       }
     }
 
-    // Step 6: Graph subgraph boost.
     const graphBoosts = new Map<string, number>();
     if (this.graphEnabled && this.graphStore && queryEntities.length > 0) {
       try {
@@ -952,7 +939,6 @@ export class Memory {
       }
     }
 
-    // Step 7: Score fusion + rank + threshold.
     const candidates: Candidate[] = semanticResults
       .filter((r) => !!r.payload.data)
       .map((r) => ({
@@ -1073,12 +1059,9 @@ export class Memory {
 
   async close(): Promise<void> {
     await this.history.close();
-    // Close any backing DB handles on stores that own one (sqlite-backed
-    // implementations expose a .close() method; others are no-ops).
-    for (const store of [this.vectorStore, this.entityStore, this.graphStore]) {
-      const closer = (store as { close?: () => void } | null)?.close;
-      if (typeof closer === "function") closer.call(store);
-    }
+    this.vectorStore.close();
+    this.entityStore?.close();
+    this.graphStore?.close();
   }
 
   // ---------------- procedural memory ----------------

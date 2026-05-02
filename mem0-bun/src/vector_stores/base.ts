@@ -41,4 +41,9 @@ export abstract class VectorStore {
     limit: number,
     filters?: Record<string, unknown>,
   ): Promise<VectorRecord[]>;
+
+  /** Release backing resources (DB handles, sockets). No-op by default. */
+  close(): void {
+    /* no-op */
+  }
 }

@@ -46,4 +46,9 @@ export abstract class GraphStore {
     filters: Record<string, unknown>,
   ): Promise<void>;
   abstract reset(): Promise<void>;
+
+  /** Release backing resources (DB handles, sockets). No-op by default. */
+  close(): void {
+    /* no-op */
+  }
 }

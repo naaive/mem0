@@ -100,8 +100,6 @@ export class InMemoryGraphStore extends GraphStore {
     const limit = options.limit ?? 50;
     const hops = Math.max(1, options.hops ?? 1);
 
-    // Step 1 — find candidate triples whose subject or object is similar
-    // to one of the query entities (≥ 0.7 cosine).
     const seedScores = new Map<number, number>(); // triple idx → best score
     for (const ent of entityEmbeddings) {
       for (let i = 0; i < this.triples.length; i++) {
@@ -117,8 +115,6 @@ export class InMemoryGraphStore extends GraphStore {
     }
     if (seedScores.size === 0) return [];
 
-    // Step 2 — expand by `hops`. At each hop we collect every triple that
-    // shares an entity with already-visited triples.
     const visited = new Map<number, number>(seedScores);
     let frontier = new Set<number>(seedScores.keys());
     for (let h = 1; h < hops; h++) {

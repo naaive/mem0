@@ -1,6 +1,10 @@
 import { Database } from "bun:sqlite";
 import { cosineSimilarity } from "../utils/hash";
 import {
+  buildScopedWhere,
+  matchPayloadFilters,
+} from "../utils/sqlite_filters";
+import {
   GraphStore,
   type GraphSearchOptions,
   type Triple,
@@ -85,37 +89,6 @@ export class SqliteGraphStore extends GraphStore {
     return v;
   }
 
-  private buildScopedWhere(filters: Record<string, unknown>): {
-    sql: string;
-    params: (string | number | null)[];
-  } {
-    const clauses: string[] = [];
-    const params: (string | number | null)[] = [];
-    for (const key of ["user_id", "agent_id", "run_id"] as const) {
-      const v = filters[key];
-      if (v !== undefined) {
-        clauses.push(`${key} = ?`);
-        params.push(typeof v === "number" ? v : String(v));
-      }
-    }
-    return {
-      sql: clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
-      params,
-    };
-  }
-
-  private matchAdditionalFilters(
-    storedFilters: Record<string, unknown>,
-    queryFilters: Record<string, unknown>,
-  ): boolean {
-    for (const [k, v] of Object.entries(queryFilters)) {
-      if (v === undefined) continue;
-      if (k === "user_id" || k === "agent_id" || k === "run_id") continue;
-      if (storedFilters[k] !== v) return false;
-    }
-    return true;
-  }
-
   private rowToTriple(row: TripleRow): {
     triple: Triple;
     subjectVec: number[];
@@ -160,9 +133,9 @@ export class SqliteGraphStore extends GraphStore {
         JSON.stringify(objectVec),
         JSON.stringify(t.filters),
         t.memoryId ?? null,
-        t.filters.user_id ? String(t.filters.user_id) : null,
-        t.filters.agent_id ? String(t.filters.agent_id) : null,
-        t.filters.run_id ? String(t.filters.run_id) : null,
+        t.filters.user_id != null ? String(t.filters.user_id) : null,
+        t.filters.agent_id != null ? String(t.filters.agent_id) : null,
+        t.filters.run_id != null ? String(t.filters.run_id) : null,
       );
     }
   }
@@ -174,7 +147,7 @@ export class SqliteGraphStore extends GraphStore {
     if (entityEmbeddings.length === 0) return [];
     const limit = options.limit ?? 50;
     const hops = Math.max(1, options.hops ?? 1);
-    const { sql, params } = this.buildScopedWhere(options.filters);
+    const { sql, params } = buildScopedWhere(options.filters);
     const rows = this.db
       .prepare(`SELECT * FROM triples ${sql}`)
       .all(...params) as TripleRow[];
@@ -202,13 +175,12 @@ export class SqliteGraphStore extends GraphStore {
       }
     }
 
-    // Step 1 — seed by similarity.
     const visited = new Map<number, number>(); // index → best score
     for (const ent of entityEmbeddings) {
       for (let i = 0; i < decoded.length; i++) {
         const d = decoded[i]!;
         if (
-          !this.matchAdditionalFilters(d.triple.filters, options.filters)
+          !matchPayloadFilters(d.triple.filters, options.filters)
         ) {
           continue;
         }
@@ -222,7 +194,6 @@ export class SqliteGraphStore extends GraphStore {
     }
     if (visited.size === 0) return [];
 
-    // Step 2 — k-hop expansion.
     let frontier = new Set<number>(visited.keys());
     for (let h = 1; h < hops; h++) {
       const next = new Set<number>();
@@ -235,7 +206,7 @@ export class SqliteGraphStore extends GraphStore {
             if (visited.has(p)) continue;
             const peer = decoded[p]!;
             if (
-              !this.matchAdditionalFilters(peer.triple.filters, options.filters)
+              !matchPayloadFilters(peer.triple.filters, options.filters)
             ) {
               continue;
             }
@@ -268,7 +239,7 @@ export class SqliteGraphStore extends GraphStore {
     memoryId: string,
     filters: Record<string, unknown>,
   ): Promise<void> {
-    const { sql, params } = this.buildScopedWhere(filters);
+    const { sql, params } = buildScopedWhere(filters);
     const where = sql ? `${sql} AND memory_id = ?` : "WHERE memory_id = ?";
     this.db
       .prepare(`DELETE FROM triples ${where}`)
@@ -281,7 +252,7 @@ export class SqliteGraphStore extends GraphStore {
   }
 
   /** Visible for tests + Memory.close(): closes the underlying DB handle. */
-  close(): void {
+  override close(): void {
     this.db.close();
   }
 
